@@ -5,3 +5,5 @@
 .gcc-flags.json
 
 .DS_Store
+
+Secrets.h
