@@ -6,6 +6,7 @@
 #include <ESP8266WebServer.h>
 #include <ArduinoOTA.h>
 #include <SoftwareSerial.h>
+#include <ArduinoJson.h>
 
 /* 
  *  NOTICE: all secrets and passwords (WIFI, MQTT, ETC) are
@@ -36,12 +37,6 @@ ESP8266WebServer server(HTTP_PORT);
 #define PMS5003ST_SIZE 40
 #define PMS5003ST_SIG1 0X42
 #define PMS5003ST_SIG2 0X4d
-
-/*
-PMS pms(Serial1);
-
-PMS::DATA data;*/
-
 
 struct pms5003STdata {
   uint16_t pm10_standard, pm25_standard, pm100_standard;
@@ -213,6 +208,31 @@ boolean readPMSdata(Stream *s) {
     Serial.println("Sum: "+ String(sum) + " - check: "+ String(data.checksum));
     return false;
   }
+  
+  
+  StaticJsonBuffer<512> json_buffer;
+  JsonObject& json_data = json_buffer.createObject();
+  
+  json_data["pm10_standard"] = data.pm10_standard;
+  json_data["pm25_standard"] = data.pm25_standard;
+  json_data["pm100_standard"] = data.pm100_standard;
+    
+  json_data["pm10_env"] = data.pm10_env;
+  json_data["pm25_env"] = data.pm25_env;
+  json_data["pm100_env"] = data.pm100_env;
+     
+  json_data["particles_03um"] = data.particles_03um;
+  json_data["particles_05um"] = data.particles_05um;
+  json_data["particles_10um"] = data.particles_10um;
+  json_data["particles_25um"] = data.particles_25um;
+  json_data["particles_50um"] = data.particles_50um;
+  json_data["particles_100um"] = data.particles_100um;
+    
+  json_data["hcho"] = float(data.hcho / 1000.0);
+  json_data["temperature"] = float(data.temperature / 10.0);
+  json_data["humidity"] = float(data.humidity / 10.0);
+
+  json_data.prettyPrintTo(Serial);
 
   return true;
 }
