@@ -24,6 +24,8 @@ WiFiClient espClient;
 WiFiManager wifiManager;
 PubSubClient mqtt_client(MQTT_SERVER, MQTT_PORT, espClient);
 
+
+
 #define SENSORNAME "air_quality_meter"
 
 #define WIFI_AP_SSID_PREFIX "AQM"
@@ -106,28 +108,17 @@ void setupArduinoOTA(){
   ArduinoOTA.begin();
 }
 
-/*void setup_pms() {
-  //pms.passiveMode();  
-  pms.wakeUp();
-  pms.activeMode();    
+void publishDatas(JsonObject& datas) {
+  
+  char buffer[datas.measureLength() + 1];
+  datas.printTo(buffer, sizeof(buffer));
+  //Serial.println(MQTT_TOPIC);
+  //Serial.println(buffer);
+  int success = mqtt_client.publish(MQTT_TOPIC, buffer);
+  //Serial.println("Buffer size: " + String(sizeof(buffer)));
+  //Serial.print("success: "); Serial.println(success);
 }
 
-void readPMS() {
-  if (pms.read(data))
-  {
-    Serial.print("WAAAAAA");
-    debug("PM 1.0 (ug/m3): ");
-    debug(String(data.PM_AE_UG_1_0));
-
-    debug("PM 2.5 (ug/m3): ");
-    debug(String(data.PM_AE_UG_2_5));
-
-    debug("PM 10.0 (ug/m3): ");
-    debug(String(data.PM_AE_UG_10_0));
-  }
-
-}
-*/
 boolean readPMSdata(Stream *s) {
   if (! s->available()) {
     return false;
@@ -213,28 +204,72 @@ boolean readPMSdata(Stream *s) {
   StaticJsonBuffer<512> json_buffer;
   JsonObject& json_data = json_buffer.createObject();
   
-  json_data["pm10_standard"] = data.pm10_standard;
-  json_data["pm25_standard"] = data.pm25_standard;
-  json_data["pm100_standard"] = data.pm100_standard;
+  json_data["pm10"] = data.pm10_standard;
+  json_data["pm25"] = data.pm25_standard;
+  json_data["pm100"] = data.pm100_standard;
     
-  json_data["pm10_env"] = data.pm10_env;
-  json_data["pm25_env"] = data.pm25_env;
-  json_data["pm100_env"] = data.pm100_env;
+  json_data["pe10"] = data.pm10_env;
+  json_data["pe25"] = data.pm25_env;
+  json_data["pe100"] = data.pm100_env;
      
-  json_data["particles_03um"] = data.particles_03um;
-  json_data["particles_05um"] = data.particles_05um;
-  json_data["particles_10um"] = data.particles_10um;
-  json_data["particles_25um"] = data.particles_25um;
-  json_data["particles_50um"] = data.particles_50um;
-  json_data["particles_100um"] = data.particles_100um;
+  json_data["pt03"] = data.particles_03um;
+  json_data["pt05"] = data.particles_05um;
+  json_data["pt10"] = data.particles_10um;
+  json_data["pt25"] = data.particles_25um;
+  json_data["pt50"] = data.particles_50um;
+  json_data["pt100"] = data.particles_100um;
     
   json_data["hcho"] = float(data.hcho / 1000.0);
-  json_data["temperature"] = float(data.temperature / 10.0);
-  json_data["humidity"] = float(data.humidity / 10.0);
+  json_data["tem"] = float(data.temperature / 10.0);
+  json_data["hum"] = float(data.humidity / 10.0);
 
-  json_data.prettyPrintTo(Serial);
+  publishDatas(json_data);
 
   return true;
+}
+
+/*
+ * Manages messages received from subscribed MQTT topics
+ *
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+
+  char message[length + 1];
+  for (int i = 0; i < length; i++) {
+    message[i] = (char)payload[i];
+  }
+  message[length] = '\0';
+  Serial.println(message);
+}*/
+
+/*
+ * Setup MQTT PubSub client
+ */
+void setupMqttClient() {
+  //mqtt_client.setCallback(callback);
+} 
+
+/*
+ * Reconnects MQTT client
+ */
+void reconnect() {
+  // Loop until we're reconnected
+  while (!mqtt_client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (mqtt_client.connect(SENSORNAME, MQTT_USER, MQTT_PASSWORD)) {
+      Serial.println("connected");
+      
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqtt_client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
 }
 
 void setup() {
@@ -244,16 +279,19 @@ void setup() {
   Serial.begin(115200);
   #endif
   
-  //setup_wifi();
-  
-  //setup_pms();
-  
-  
+  setup_wifi();
+  setupMqttClient();
 }
 
 void loop() {
   
     ArduinoOTA.handle();
+    
+    if (!mqtt_client.connected()) {
+      reconnect();
+    }
+    mqtt_client.loop();
+  
     
     if (readPMSdata(&pmsSerial)) {
     // reading data was successful!
