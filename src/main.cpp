@@ -18,11 +18,11 @@
 
 #define DEBUG True
 
-SoftwareSerial pmsSerial(D7, D8);
+SoftwareSerial pms_serial(D7, D8);
 
-WiFiClient espClient;
-WiFiManager wifiManager;
-PubSubClient mqtt_client(MQTT_SERVER, MQTT_PORT, espClient);
+WiFiClient esp_client;
+WiFiManager wifi_manager;
+PubSubClient mqtt_client(MQTT_SERVER, MQTT_PORT, esp_client);
 
 
 
@@ -60,19 +60,19 @@ void debug(String str) {
 #endif  // DEBUG
 }
 
-void configModeCallback (WiFiManager *wiFiManager) {
+void configModeCallback (WiFiManager *wifi_manager) {
   debug("Entered AP mode");
 }
 
 void setup_wifi() {
   debug("Trying to connect to WiFi network");
   delay(10);
-  wifiManager.setAPCallback(configModeCallback);
-  wifiManager.setTimeout(300);  // Timeout 5 mins.
+  wifi_manager.setAPCallback(configModeCallback);
+  wifi_manager.setTimeout(300);  // Timeout 5 mins.
   
   String ssid = String(WIFI_AP_SSID_PREFIX) + "_" + String(ESP.getChipId(),HEX);
   
-  if (!wifiManager.autoConnect(ssid.c_str(), WIFI_AP_SSID_PWD)) {
+  if (!wifi_manager.autoConnect(ssid.c_str(), WIFI_AP_SSID_PWD)) {
     debug("Wifi failed to connect and hit timeout.");
     delay(3000);
     ESP.reset();
@@ -274,7 +274,7 @@ void reconnect() {
 
 void setup() {
   
-  pmsSerial.begin(9600);
+  pms_serial.begin(9600);
   #ifdef DEBUG
   Serial.begin(115200);
   #endif
@@ -293,7 +293,7 @@ void loop() {
     mqtt_client.loop();
   
     
-    if (readPMSdata(&pmsSerial)) {
+    if (readPMSdata(&pms_serial)) {
     // reading data was successful!
     Serial.println();
     Serial.println("---------------------------------------");
