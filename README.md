@@ -54,7 +54,7 @@ After being flashed this application needs almost no configuration. Just to setu
 To do that power the device up using the module micro-usb port. It'll boot in Access-point mode and a new wifi ssid will be available:
 ```
 ssid: AQM_xxxxxx
-pass: stop_a1r_p0llution
+pass: stop_air_pollution
 ```
 Connect to that and a configuration page it will be displayed to you. If it'll not happen just open the browser and go to [http://192.168.4.1](http://192.168.4.1)
 

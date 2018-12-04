@@ -1,3 +1,4 @@
+#include <FS.h>
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
@@ -16,22 +17,40 @@
  */
 #include "Secrets.h"
 
-#define DEBUG True
+/*
+ * Modify this file to preload default configuration!
+ */
+#define CONFIG_FILE  "/config.json"
+
+
+char wifi_ssid[32] = "";
+char wifi_password[64] = "";
+char access_point_prefix[25] = "AQM-";
+char access_point_password[64] = "stop_air_pollution";
+char mqtt_server[40] = "";
+char mqtt_port[6] = "8080";
+char mqtt_topic[200] = "air_quality_meter/status";
+
+WiFiManagerParameter custom_access_point_prefix("access_point_prefix", "AP mode - SSID prefix", access_point_prefix, 25);
+WiFiManagerParameter custom_access_point_password("access_point_password", "AP mode - SSID prefix", access_point_password, 64);
+WiFiManagerParameter custom_mqtt_server("mqtt_server", "MQTT server address", mqtt_server, 40);
+WiFiManagerParameter custom_mqtt_port("mqtt_port", "MQTT server port", mqtt_port, 6);
+WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT topic", mqtt_topic, 200);
+
+#define DEBUG true
 
 SoftwareSerial pms_serial(D7, D8);
 
 WiFiClient esp_client;
 WiFiManager wifi_manager;
-PubSubClient mqtt_client(MQTT_SERVER, MQTT_PORT, esp_client);
+PubSubClient mqtt_client(esp_client);
 
-
+// semaphore to save config file
+bool proceed_and_save_configuration = false;
 
 #define SENSORNAME "air_quality_meter"
 
-#define WIFI_AP_SSID_PREFIX "AQM"
-#ifndef WIFI_AP_SSID_PWD
-  #define WIFI_AP_SSID_PWD "stop_a1r_p0llution"
-#endif
+
 
 #define HTTP_PORT 80
 ESP8266WebServer server(HTTP_PORT);
@@ -60,27 +79,124 @@ void debug(String str) {
 #endif  // DEBUG
 }
 
+/**
+ * let the configuration save process begin
+ */
+void unlockSaveConfig()
+{
+  proceed_and_save_configuration = true;
+}
+
+/**
+ * Load configuration from file ./config.json
+ * 
+ * Modify this file to preload default configuration!
+ */
+void loadConfig() {
+  
+  debug("mounting FS..");
+  if (SPIFFS.begin()) {
+    debug("filesystem mounted");
+    if(SPIFFS.exists(CONFIG_FILE)) {
+      File config = SPIFFS.open(CONFIG_FILE, "r");
+      if(!config) {
+        debug("unable to open config file");
+      } else {
+        debug("Opened config file");
+        /*
+         * allocate a buffer to store data inside the file
+         */
+        size_t size = config.size();
+        std::unique_ptr<char[]> buffer(new char[size]);
+        config.readBytes(buffer.get(), size);
+        DynamicJsonBuffer json_buffer;
+        JsonObject& json = json_buffer.parseObject(buffer.get());
+        if (json.success()) {
+          debug("json loaded");
+          strcpy(wifi_ssid, json["wifi_ssid"]);
+          strcpy(wifi_password, json["wifi_password"]);
+          strcpy(access_point_prefix, json["access_point_prefix"]);
+          strcpy(access_point_password, json["access_point_password"]);
+          strcpy(mqtt_server, json["mqtt_server"]);
+          strcpy(mqtt_port, json["mqtt_port"]);
+          strcpy(mqtt_topic, json["mqtt_topic"]);  
+        } else {
+          debug("failed to load json");
+        }
+      }
+      
+    }
+  }
+}
+
+
+
 void configModeCallback (WiFiManager *wifi_manager) {
   debug("Entered AP mode");
 }
 
 void setup_wifi() {
   debug("Trying to connect to WiFi network");
-  delay(10);
+  delay(200);
+  wifi_manager.setSaveConfigCallback(unlockSaveConfig);
   wifi_manager.setAPCallback(configModeCallback);
+  
+  wifi_manager.addParameter(&custom_access_point_prefix);
+  wifi_manager.addParameter(&custom_access_point_password);
+  wifi_manager.addParameter(&custom_mqtt_server);
+  wifi_manager.addParameter(&custom_mqtt_port);
+  wifi_manager.addParameter(&custom_mqtt_topic);
+  
+  /*
+   * Configuration portal will remain active for 5 minutes.
+   * Then it will reboot himself
+   */
   wifi_manager.setTimeout(300);  // Timeout 5 mins.
   
-  String ssid = String(WIFI_AP_SSID_PREFIX) + "_" + String(ESP.getChipId(),HEX);
+  String ssid = access_point_prefix + String(ESP.getChipId(),HEX);
   
   if (!wifi_manager.autoConnect(ssid.c_str(), WIFI_AP_SSID_PWD)) {
     debug("Wifi failed to connect and hit timeout.");
     delay(3000);
-    ESP.reset();
+    ESP.restart();
     delay(5000);
   }
+  debug("Connected");
+  
+  strcpy(access_point_prefix, custom_access_point_prefix.getValue());
+  strcpy(access_point_password, custom_access_point_password.getValue());
+  strcpy(mqtt_server, custom_mqtt_server.getValue());
+  strcpy(mqtt_port, custom_mqtt_port.getValue());
+  strcpy(mqtt_topic, custom_mqtt_topic.getValue());
+  
+  // save user configuration to filesystem
+  if (proceed_and_save_configuration) {
+    debug("Saving configuration");
+    DynamicJsonBuffer json_buffer;
+    JsonObject& json = json_buffer.createObject();
+
+    json["access_point_prefix"] = access_point_prefix;
+    json["access_point_password"] = access_point_password;
+    json["mqtt_server"] = mqtt_server;
+    json["mqtt_port"] = mqtt_port;
+    json["mqtt_topic"] = mqtt_topic;  
+
+    File config = SPIFFS.open(CONFIG_FILE, "w");
+    if(!config) {
+      debug("unable to open config file");
+    } else {
+      debug("Opened config file");
+      json.printTo(config);
+      debug("User configuration saved");
+      config.close();
+      debug("Config file closed");
+    }
+    //end save
+  }
+  
 }
 
-/*
+/**
  * Setup (esp8266) OverTheAir update
  */
 void setupArduinoOTA(){
@@ -114,7 +230,7 @@ void publishDatas(JsonObject& datas) {
   datas.printTo(buffer, sizeof(buffer));
   //Serial.println(MQTT_TOPIC);
   //Serial.println(buffer);
-  int success = mqtt_client.publish(MQTT_TOPIC, buffer);
+  mqtt_client.publish(mqtt_topic, buffer);
   //Serial.println("Buffer size: " + String(sizeof(buffer)));
   //Serial.print("success: "); Serial.println(success);
 }
@@ -228,30 +344,16 @@ boolean readPMSdata(Stream *s) {
   return true;
 }
 
-/*
- * Manages messages received from subscribed MQTT topics
- *
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-
-  char message[length + 1];
-  for (int i = 0; i < length; i++) {
-    message[i] = (char)payload[i];
-  }
-  message[length] = '\0';
-  Serial.println(message);
-}*/
-
-/*
+/**
  * Setup MQTT PubSub client
  */
 void setupMqttClient() {
-  //mqtt_client.setCallback(callback);
+  uint16_t port; 
+  sscanf(mqtt_port, "%d", &port);
+  mqtt_client.setServer(mqtt_server, port);
 } 
 
-/*
+/**
  * Reconnects MQTT client
  */
 void reconnect() {
@@ -272,7 +374,10 @@ void reconnect() {
   }
 }
 
+
 void setup() {
+  
+  loadConfig();
   
   pms_serial.begin(9600);
   #ifdef DEBUG
