@@ -5,5 +5,8 @@
 .gcc-flags.json
 
 .DS_Store
+data/config.json
 
 Secrets.h
+
+*.exclude

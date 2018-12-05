@@ -28,16 +28,20 @@ char wifi_password[64] = "";
 char access_point_prefix[25] = "AQM-";
 char access_point_password[64] = "stop_air_pollution";
 char mqtt_server[40] = "";
-char mqtt_port[6] = "8080";
+char mqtt_port[6] = "1883";
+char mqtt_username[32] = "";
+char mqtt_password[64] = "";
 char mqtt_topic[200] = "air_quality_meter/status";
 
 WiFiManagerParameter custom_access_point_prefix("access_point_prefix", "AP mode - SSID prefix", access_point_prefix, 25);
-WiFiManagerParameter custom_access_point_password("access_point_password", "AP mode - SSID prefix", access_point_password, 64);
+WiFiManagerParameter custom_access_point_password("access_point_password", "AP mode - password", access_point_password, 64);
 WiFiManagerParameter custom_mqtt_server("mqtt_server", "MQTT server address", mqtt_server, 40);
 WiFiManagerParameter custom_mqtt_port("mqtt_port", "MQTT server port", mqtt_port, 6);
+WiFiManagerParameter custom_mqtt_username("mqtt_username", "MQTT username", mqtt_username, 6);
+WiFiManagerParameter custom_mqtt_password("mqtt_password", "MQTT password", mqtt_password, 200);
 WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT topic", mqtt_topic, 200);
 
-#define DEBUG true
+#define DEBUG True
 
 SoftwareSerial pms_serial(D7, D8);
 
@@ -73,10 +77,10 @@ struct pms5003STdata data;
 
 
 void debug(String str) {
-#ifdef DEBUG
+//#ifdef DEBUG
   uint32_t now = millis();
   Serial.printf("%07u.%03u: %s\n", now / 1000, now % 1000, str.c_str());
-#endif  // DEBUG
+//#endif  // DEBUG
 }
 
 /**
@@ -94,7 +98,7 @@ void unlockSaveConfig()
  */
 void loadConfig() {
   
-  debug("mounting FS..");
+  Serial.println("mounting FS..");
   if (SPIFFS.begin()) {
     debug("filesystem mounted");
     if(SPIFFS.exists(CONFIG_FILE)) {
@@ -113,13 +117,23 @@ void loadConfig() {
         JsonObject& json = json_buffer.parseObject(buffer.get());
         if (json.success()) {
           debug("json loaded");
+          json.printTo(Serial);
           strcpy(wifi_ssid, json["wifi_ssid"]);
           strcpy(wifi_password, json["wifi_password"]);
+          
+          // if wifi configuration is given preconfigure network
+          if((wifi_ssid[0] != 0)) {
+            WiFi.mode(WIFI_STA);
+            WiFi.begin(wifi_ssid, wifi_password);
+          }
+          
           strcpy(access_point_prefix, json["access_point_prefix"]);
           strcpy(access_point_password, json["access_point_password"]);
           strcpy(mqtt_server, json["mqtt_server"]);
           strcpy(mqtt_port, json["mqtt_port"]);
-          strcpy(mqtt_topic, json["mqtt_topic"]);  
+          strcpy(mqtt_username, json["mqtt_username"]);
+          strcpy(mqtt_password, json["mqtt_password"]);
+          strcpy(mqtt_topic, json["mqtt_topic"]);
         } else {
           debug("failed to load json");
         }
@@ -145,6 +159,8 @@ void setup_wifi() {
   wifi_manager.addParameter(&custom_access_point_password);
   wifi_manager.addParameter(&custom_mqtt_server);
   wifi_manager.addParameter(&custom_mqtt_port);
+  wifi_manager.addParameter(&custom_mqtt_username);  
+  wifi_manager.addParameter(&custom_mqtt_password);
   wifi_manager.addParameter(&custom_mqtt_topic);
   
   /*
@@ -155,7 +171,7 @@ void setup_wifi() {
   
   String ssid = access_point_prefix + String(ESP.getChipId(),HEX);
   
-  if (!wifi_manager.autoConnect(ssid.c_str(), WIFI_AP_SSID_PWD)) {
+  if (!wifi_manager.autoConnect(ssid.c_str(), access_point_password)) {
     debug("Wifi failed to connect and hit timeout.");
     delay(3000);
     ESP.restart();
@@ -167,6 +183,8 @@ void setup_wifi() {
   strcpy(access_point_password, custom_access_point_password.getValue());
   strcpy(mqtt_server, custom_mqtt_server.getValue());
   strcpy(mqtt_port, custom_mqtt_port.getValue());
+  strcpy(mqtt_username, custom_mqtt_username.getValue());
+  strcpy(mqtt_password, custom_mqtt_password.getValue());
   strcpy(mqtt_topic, custom_mqtt_topic.getValue());
   
   // save user configuration to filesystem
@@ -177,6 +195,8 @@ void setup_wifi() {
 
     json["access_point_prefix"] = access_point_prefix;
     json["access_point_password"] = access_point_password;
+    json["mqtt_username"] = mqtt_username;
+    json["mqtt_password"] = mqtt_password;
     json["mqtt_server"] = mqtt_server;
     json["mqtt_port"] = mqtt_port;
     json["mqtt_topic"] = mqtt_topic;  
@@ -350,6 +370,7 @@ boolean readPMSdata(Stream *s) {
 void setupMqttClient() {
   uint16_t port; 
   sscanf(mqtt_port, "%d", &port);
+  Serial.print("mqtt server: ");Serial.print(mqtt_server);
   mqtt_client.setServer(mqtt_server, port);
 } 
 
@@ -359,9 +380,10 @@ void setupMqttClient() {
 void reconnect() {
   // Loop until we're reconnected
   while (!mqtt_client.connected()) {
+    Serial.print("username : '");Serial.print( mqtt_username);Serial.print("' - pass: '"); Serial.print(mqtt_password); Serial.println("'");
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqtt_client.connect(SENSORNAME, MQTT_USER, MQTT_PASSWORD)) {
+    if (mqtt_client.connect(SENSORNAME, mqtt_username, mqtt_password)) {
       Serial.println("connected");
       
     } else {
@@ -376,13 +398,17 @@ void reconnect() {
 
 
 void setup() {
-  
-  loadConfig();
-  
   pms_serial.begin(9600);
   #ifdef DEBUG
   Serial.begin(115200);
   #endif
+  delay(1000);
+  // uncomment to reset ESP8266
+  wifi_manager.resetSettings();
+  debug("Setup device");
+  loadConfig();
+  
+
   
   setup_wifi();
   setupMqttClient();
