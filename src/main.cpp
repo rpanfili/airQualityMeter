@@ -24,6 +24,8 @@ struct configStruct {
   char mqtt_username[32] = "";
   char mqtt_password[64] = "";
   char mqtt_topic[200] = "air_quality_meter/status";
+  char ota_password[64] = "ota_password";
+  char ota_port[6] = "8266";
 };
 
 configStruct config;
@@ -135,6 +137,12 @@ void loadConfig() {
           if(json.get<const char*>("mqtt_topic")[0] != '\0') {
             strlcpy(config.mqtt_topic, json["mqtt_topic"], sizeof(config.mqtt_topic));  
           }
+          if(json.get<const char*>("ota_password")[0] != '\0') {
+            strlcpy(config.ota_password, json["ota_password"], sizeof(config.ota_password));  
+          }
+          if(json.get<const char*>("ota_port")[0] != '\0') {
+            strlcpy(config.ota_port, json["ota_port"], sizeof(config.ota_port));  
+          }
         } else {
           debug("failed to load json");
         }
@@ -163,6 +171,8 @@ void setup_wifi() {
   WiFiManagerParameter custom_mqtt_username("mqtt_username", "MQTT username", config.mqtt_username, 6);
   WiFiManagerParameter custom_mqtt_password("mqtt_password", "MQTT password", config.mqtt_password, 200);
   WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT topic", config.mqtt_topic, 200);
+  WiFiManagerParameter custom_ota_password("ota_password", "OTA password", config.ota_password, 200);
+  WiFiManagerParameter custom_ota_port("ota_port", "OTA port", config.ota_port, 200);
   
   wifi_manager.addParameter(&custom_access_point_prefix);
   wifi_manager.addParameter(&custom_access_point_password);
@@ -170,7 +180,9 @@ void setup_wifi() {
   wifi_manager.addParameter(&custom_mqtt_port);
   wifi_manager.addParameter(&custom_mqtt_username);  
   wifi_manager.addParameter(&custom_mqtt_password);
-  wifi_manager.addParameter(&custom_mqtt_topic);
+  wifi_manager.addParameter(&custom_mqtt_topic); 
+  wifi_manager.addParameter(&custom_ota_password);
+  wifi_manager.addParameter(&custom_ota_port);
   
   /*
    * Configuration portal will remain active for 5 minutes.
@@ -195,6 +207,8 @@ void setup_wifi() {
   strlcpy(config.mqtt_username, custom_mqtt_username.getValue(), sizeof(config.mqtt_username));
   strlcpy(config.mqtt_password, custom_mqtt_password.getValue(), sizeof(config.mqtt_password));
   strlcpy(config.mqtt_topic, custom_mqtt_topic.getValue(), sizeof(config.mqtt_topic));
+  strlcpy(config.ota_password, custom_ota_password.getValue(), sizeof(config.ota_password));
+  strlcpy(config.ota_port, custom_ota_port.getValue(), sizeof(config.ota_port));
   
   // save user configuration to filesystem
   if (proceed_and_save_configuration) {
@@ -209,6 +223,8 @@ void setup_wifi() {
     json["mqtt_server"] = config.mqtt_server;
     json["mqtt_port"] = config.mqtt_port;
     json["mqtt_topic"] = config.mqtt_topic;  
+    json["ota_password"] = config.ota_password;
+    json["ota_port"] = config.ota_port;  
 
     File configFile = SPIFFS.open(CONFIG_FILE, "w");
     if(!configFile) {
@@ -229,9 +245,11 @@ void setup_wifi() {
  * Setup (esp8266) OverTheAir update
  */
 void setupArduinoOTA(){
-  ArduinoOTA.setPort(OTAport);
+  uint16_t port; 
+  sscanf(config.ota_port, "%d", &port);
+  ArduinoOTA.setPort(port);
   ArduinoOTA.setHostname(SENSORNAME);
-  ArduinoOTA.setPassword((const char *)OTApassword);
+  ArduinoOTA.setPassword(config.ota_password);
   
   ArduinoOTA.onStart([]() {
     Serial.println("Starting OTA");
