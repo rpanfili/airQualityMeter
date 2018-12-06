@@ -37,16 +37,14 @@ running. Remember that you *can* do all the setup steps without the PMS sensor c
 #### Get [PlatformIO](https://platformio.org/) up and running
 If you are used to this kind of software you already know how easier is to manage project dependencies, custom build routine, etc but if you are not don't worry! It's really easy and this can be a good starting point to learn something new :) You only need to [install it](https://platformio.org/platformio-ide) for your favorite IDE between Atom and VSCode.
 
-#### [NOT REQUIRED] - Create configuration file
-If you would like it you can create a configuration file to **preload all parameters** and skip the access-point mode configuration step later.
-Copy the boilerplate configuration into `data/config.json`:
-  
-```shell
-cd data
-cp config.json.dist config.json
-```
-and modify it.
+#### [NOT REQUIRED] - Edit the configuration file
+If you would like it you can edit the `data/config.json` configuration file to **preload all parameters** and skip the access-point mode configuration step later.
 If you want you can configure only some of the parameters. Remove the property or leave it empty to use default project values.
+Then you will need to upload this file into the SPI filesystem using the PlatformIO command:
+```shell
+pio run -t uploadfs
+```
+or by using the IDE top menu: **"PlatformIO" >> "Run other target..." >> "PIO Upload File System Image"**
 
 #### Flash the module
 Connect the NodeMCU via usb and from the top menu press **"PlatformIO" >> "Build"** and hopefully that's all! 

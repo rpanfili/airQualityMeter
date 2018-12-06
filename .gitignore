@@ -5,7 +5,11 @@
 .gcc-flags.json
 
 .DS_Store
-data/config.json
+
+# If you want to ignore changes to config.json use:
+# git update-index --assume-unchanged data/config.json
+
+# data/config.json
 
 Secrets.h
 

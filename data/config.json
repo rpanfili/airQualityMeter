@@ -7,5 +7,5 @@
   "mqtt_port": "",
   "mqtt_username": "",
   "mqtt_password": "",
-  "mqtt_topic": "",
+  "mqtt_topic": ""
 }
