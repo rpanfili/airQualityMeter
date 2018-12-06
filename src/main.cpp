@@ -9,19 +9,10 @@
 #include <SoftwareSerial.h>
 #include <ArduinoJson.h>
 
-/* 
- *  NOTICE: all secrets and passwords (WIFI, MQTT, ETC) are
- *  stored into Secrets.h 
- *  This file is not included into this repository so please copy
- *  the example (Secrets.h.dist) and modify it
- */
-#include "Secrets.h"
-
 /*
  * Modify this file to preload default configuration!
  */
 #define CONFIG_FILE  "/config.json"
-
 
 struct configStruct {
   char wifi_ssid[32] = "";
@@ -50,8 +41,6 @@ bool proceed_and_save_configuration = false;
 
 #define SENSORNAME "air_quality_meter"
 
-
-
 #define HTTP_PORT 80
 ESP8266WebServer server(HTTP_PORT);
 
@@ -70,7 +59,6 @@ struct pms5003STdata {
 };
  
 struct pms5003STdata data;
-
 
 void debug(String str) {
 #ifdef DEBUG
