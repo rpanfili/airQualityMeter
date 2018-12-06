@@ -23,23 +23,19 @@
 #define CONFIG_FILE  "/config.json"
 
 
-char wifi_ssid[32] = "";
-char wifi_password[64] = "";
-char access_point_prefix[25] = "AQM-";
-char access_point_password[64] = "stop_air_pollution";
-char mqtt_server[40] = "";
-char mqtt_port[6] = "1883";
-char mqtt_username[32] = "";
-char mqtt_password[64] = "";
-char mqtt_topic[200] = "air_quality_meter/status";
+struct configStruct {
+  char wifi_ssid[32] = "";
+  char wifi_password[64] = "";
+  char access_point_prefix[25] = "AQM-";
+  char access_point_password[64] = "stop_air_pollution";
+  char mqtt_server[40] = "";
+  char mqtt_port[6] = "1883";
+  char mqtt_username[32] = "";
+  char mqtt_password[64] = "";
+  char mqtt_topic[200] = "air_quality_meter/status";
+};
 
-WiFiManagerParameter custom_access_point_prefix("access_point_prefix", "AP mode - SSID prefix", access_point_prefix, 25);
-WiFiManagerParameter custom_access_point_password("access_point_password", "AP mode - password", access_point_password, 64);
-WiFiManagerParameter custom_mqtt_server("mqtt_server", "MQTT server address", mqtt_server, 40);
-WiFiManagerParameter custom_mqtt_port("mqtt_port", "MQTT server port", mqtt_port, 6);
-WiFiManagerParameter custom_mqtt_username("mqtt_username", "MQTT username", mqtt_username, 6);
-WiFiManagerParameter custom_mqtt_password("mqtt_password", "MQTT password", mqtt_password, 200);
-WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT topic", mqtt_topic, 200);
+configStruct config;
 
 #define DEBUG True
 
@@ -77,10 +73,10 @@ struct pms5003STdata data;
 
 
 void debug(String str) {
-//#ifdef DEBUG
+#ifdef DEBUG
   uint32_t now = millis();
   Serial.printf("%07u.%03u: %s\n", now / 1000, now % 1000, str.c_str());
-//#endif  // DEBUG
+#endif  // DEBUG
 }
 
 /**
@@ -102,38 +98,55 @@ void loadConfig() {
   if (SPIFFS.begin()) {
     debug("filesystem mounted");
     if(SPIFFS.exists(CONFIG_FILE)) {
-      File config = SPIFFS.open(CONFIG_FILE, "r");
-      if(!config) {
+      File configFile = SPIFFS.open(CONFIG_FILE, "r");
+      if(!configFile) {
         debug("unable to open config file");
       } else {
         debug("Opened config file");
         /*
          * allocate a buffer to store data inside the file
          */
-        size_t size = config.size();
+        size_t size = configFile.size();
         std::unique_ptr<char[]> buffer(new char[size]);
-        config.readBytes(buffer.get(), size);
+        configFile.readBytes(buffer.get(), size);
         DynamicJsonBuffer json_buffer;
         JsonObject& json = json_buffer.parseObject(buffer.get());
         if (json.success()) {
           debug("json loaded");
           json.printTo(Serial);
-          strcpy(wifi_ssid, json["wifi_ssid"]);
-          strcpy(wifi_password, json["wifi_password"]);
           
-          // if wifi configuration is given preconfigure network
-          if((wifi_ssid[0] != 0)) {
+          strlcpy(config.wifi_ssid, json.get<const char*>("wifi_ssid"), sizeof(config.wifi_ssid));
+          strlcpy(config.wifi_password, json.get<const char*>("wifi_password"), sizeof(config.wifi_password));
+          if((config.wifi_ssid[0] != '\0')) {
             WiFi.mode(WIFI_STA);
-            WiFi.begin(wifi_ssid, wifi_password);
+            WiFi.begin(config.wifi_ssid, config.wifi_password);
           }
           
-          strcpy(access_point_prefix, json["access_point_prefix"]);
-          strcpy(access_point_password, json["access_point_password"]);
-          strcpy(mqtt_server, json["mqtt_server"]);
-          strcpy(mqtt_port, json["mqtt_port"]);
-          strcpy(mqtt_username, json["mqtt_username"]);
-          strcpy(mqtt_password, json["mqtt_password"]);
-          strcpy(mqtt_topic, json["mqtt_topic"]);
+          /*
+           * Safely-load configuration values from config.json (manages also 
+           * undefined keys)
+           */
+          if(json.get<const char*>("access_point_prefix")[0] != '\0') {
+            strlcpy(config.access_point_prefix, json["access_point_prefix"], sizeof(config.access_point_prefix));  
+          }
+          if(json.get<const char*>("access_point_password")[0] != '\0') {
+            strlcpy(config.access_point_password, json["access_point_password"], sizeof(config.access_point_password));  
+          }
+          if(json.get<const char*>("mqtt_server")[0] != '\0') {
+            strlcpy(config.mqtt_server, json["mqtt_server"], sizeof(config.mqtt_server));  
+          }
+          if(json.get<const char*>("mqtt_port")[0] != '\0') {
+            strlcpy(config.mqtt_port, json["mqtt_port"], sizeof(config.mqtt_port));  
+          }
+          if(json.get<const char*>("mqtt_username")[0] != '\0') {
+            strlcpy(config.mqtt_username, json["mqtt_username"], sizeof(config.mqtt_username));  
+          }
+          if(json.get<const char*>("mqtt_password")[0] != '\0') {
+            strlcpy(config.mqtt_password, json["mqtt_password"], sizeof(config.mqtt_password));  
+          }
+          if(json.get<const char*>("mqtt_topic")[0] != '\0') {
+            strlcpy(config.mqtt_topic, json["mqtt_topic"], sizeof(config.mqtt_topic));  
+          }
         } else {
           debug("failed to load json");
         }
@@ -155,6 +168,14 @@ void setup_wifi() {
   wifi_manager.setSaveConfigCallback(unlockSaveConfig);
   wifi_manager.setAPCallback(configModeCallback);
   
+  WiFiManagerParameter custom_access_point_prefix("access_point_prefix", "AP mode - SSID prefix", config.access_point_prefix, 25);
+  WiFiManagerParameter custom_access_point_password("access_point_password", "AP mode - password", config.access_point_password, 64);
+  WiFiManagerParameter custom_mqtt_server("mqtt_server", "MQTT server address", config.mqtt_server, 40);
+  WiFiManagerParameter custom_mqtt_port("mqtt_port", "MQTT server port", config.mqtt_port, 6);
+  WiFiManagerParameter custom_mqtt_username("mqtt_username", "MQTT username", config.mqtt_username, 6);
+  WiFiManagerParameter custom_mqtt_password("mqtt_password", "MQTT password", config.mqtt_password, 200);
+  WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT topic", config.mqtt_topic, 200);
+  
   wifi_manager.addParameter(&custom_access_point_prefix);
   wifi_manager.addParameter(&custom_access_point_password);
   wifi_manager.addParameter(&custom_mqtt_server);
@@ -169,9 +190,9 @@ void setup_wifi() {
    */
   wifi_manager.setTimeout(300);  // Timeout 5 mins.
   
-  String ssid = access_point_prefix + String(ESP.getChipId(),HEX);
+  String ssid = config.access_point_prefix + String(ESP.getChipId(),HEX);
   
-  if (!wifi_manager.autoConnect(ssid.c_str(), access_point_password)) {
+  if (!wifi_manager.autoConnect(ssid.c_str(), config.access_point_password)) {
     debug("Wifi failed to connect and hit timeout.");
     delay(3000);
     ESP.restart();
@@ -179,13 +200,13 @@ void setup_wifi() {
   }
   debug("Connected");
   
-  strcpy(access_point_prefix, custom_access_point_prefix.getValue());
-  strcpy(access_point_password, custom_access_point_password.getValue());
-  strcpy(mqtt_server, custom_mqtt_server.getValue());
-  strcpy(mqtt_port, custom_mqtt_port.getValue());
-  strcpy(mqtt_username, custom_mqtt_username.getValue());
-  strcpy(mqtt_password, custom_mqtt_password.getValue());
-  strcpy(mqtt_topic, custom_mqtt_topic.getValue());
+  strlcpy(config.access_point_prefix, custom_access_point_prefix.getValue(), sizeof(config.access_point_prefix));
+  strlcpy(config.access_point_password, custom_access_point_password.getValue(), sizeof(config.access_point_password));
+  strlcpy(config.mqtt_server, custom_mqtt_server.getValue(), sizeof(config.mqtt_server));
+  strlcpy(config.mqtt_port, custom_mqtt_port.getValue(), sizeof(config.mqtt_port));
+  strlcpy(config.mqtt_username, custom_mqtt_username.getValue(), sizeof(config.mqtt_username));
+  strlcpy(config.mqtt_password, custom_mqtt_password.getValue(), sizeof(config.mqtt_password));
+  strlcpy(config.mqtt_topic, custom_mqtt_topic.getValue(), sizeof(config.mqtt_topic));
   
   // save user configuration to filesystem
   if (proceed_and_save_configuration) {
@@ -193,22 +214,22 @@ void setup_wifi() {
     DynamicJsonBuffer json_buffer;
     JsonObject& json = json_buffer.createObject();
 
-    json["access_point_prefix"] = access_point_prefix;
-    json["access_point_password"] = access_point_password;
-    json["mqtt_username"] = mqtt_username;
-    json["mqtt_password"] = mqtt_password;
-    json["mqtt_server"] = mqtt_server;
-    json["mqtt_port"] = mqtt_port;
-    json["mqtt_topic"] = mqtt_topic;  
+    json["access_point_prefix"] = config.access_point_prefix;
+    json["access_point_password"] = config.access_point_password;
+    json["mqtt_username"] = config.mqtt_username;
+    json["mqtt_password"] = config.mqtt_password;
+    json["mqtt_server"] = config.mqtt_server;
+    json["mqtt_port"] = config.mqtt_port;
+    json["mqtt_topic"] = config.mqtt_topic;  
 
-    File config = SPIFFS.open(CONFIG_FILE, "w");
-    if(!config) {
+    File configFile = SPIFFS.open(CONFIG_FILE, "w");
+    if(!configFile) {
       debug("unable to open config file");
     } else {
       debug("Opened config file");
-      json.printTo(config);
+      json.printTo(configFile);
       debug("User configuration saved");
-      config.close();
+      configFile.close();
       debug("Config file closed");
     }
     //end save
@@ -250,7 +271,7 @@ void publishDatas(JsonObject& datas) {
   datas.printTo(buffer, sizeof(buffer));
   //Serial.println(MQTT_TOPIC);
   //Serial.println(buffer);
-  mqtt_client.publish(mqtt_topic, buffer);
+  mqtt_client.publish(config.mqtt_topic, buffer);
   //Serial.println("Buffer size: " + String(sizeof(buffer)));
   //Serial.print("success: "); Serial.println(success);
 }
@@ -369,9 +390,9 @@ boolean readPMSdata(Stream *s) {
  */
 void setupMqttClient() {
   uint16_t port; 
-  sscanf(mqtt_port, "%d", &port);
-  Serial.print("mqtt server: ");Serial.print(mqtt_server);
-  mqtt_client.setServer(mqtt_server, port);
+  sscanf(config.mqtt_port, "%d", &port);
+  debug("mqtt server: "+ String(config.mqtt_server) + " - port: " + String(port));
+  mqtt_client.setServer(config.mqtt_server, port);
 } 
 
 /**
@@ -380,10 +401,12 @@ void setupMqttClient() {
 void reconnect() {
   // Loop until we're reconnected
   while (!mqtt_client.connected()) {
-    Serial.print("username : '");Serial.print( mqtt_username);Serial.print("' - pass: '"); Serial.print(mqtt_password); Serial.println("'");
+    Serial.print("username : '");Serial.print( config.mqtt_username);Serial.print("' - pass: '"); 
+    Serial.print(config.mqtt_password); Serial.println("'");
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqtt_client.connect(SENSORNAME, mqtt_username, mqtt_password)) {
+    String sensorname = config.access_point_prefix + String(ESP.getChipId(),HEX);
+    if (mqtt_client.connect(sensorname.c_str(), config.mqtt_username, config.mqtt_password)) {
       Serial.println("connected");
       
     } else {
@@ -403,13 +426,13 @@ void setup() {
   Serial.begin(115200);
   #endif
   delay(1000);
+  
   // uncomment to reset ESP8266
-  wifi_manager.resetSettings();
+  //wifi_manager.resetSettings();
+  
   debug("Setup device");
+  
   loadConfig();
-  
-
-  
   setup_wifi();
   setupMqttClient();
 }
