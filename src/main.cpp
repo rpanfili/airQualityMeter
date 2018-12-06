@@ -8,6 +8,9 @@
 #include <ArduinoOTA.h>
 #include <SoftwareSerial.h>
 #include <ArduinoJson.h>
+#include <Ticker.h>
+
+
 
 /*
  * Modify this file to preload default configuration!
@@ -31,6 +34,9 @@ struct configStruct {
 configStruct config;
 
 #define DEBUG True
+
+#define STATUS_LED LED_BUILTIN
+
 
 SoftwareSerial pms_serial(D7, D8);
 
@@ -69,6 +75,12 @@ void debug(String str) {
 #endif  // DEBUG
 }
 
+void toggleLed() {
+  digitalWrite(STATUS_LED, !digitalRead(STATUS_LED));
+}
+
+Ticker wifi_scan_blink(toggleLed, 500);
+Ticker wifi_ap_mode_blink(toggleLed, 200);
 /**
  * let the configuration save process begin
  */
@@ -156,10 +168,12 @@ void loadConfig() {
 
 void configModeCallback (WiFiManager *wifi_manager) {
   debug("Entered AP mode");
+  wifi_ap_mode_blink.start();
 }
 
 void setup_wifi() {
   debug("Trying to connect to WiFi network");
+  wifi_scan_blink.start();
   delay(200);
   wifi_manager.setSaveConfigCallback(unlockSaveConfig);
   wifi_manager.setAPCallback(configModeCallback);
@@ -199,6 +213,7 @@ void setup_wifi() {
     delay(5000);
   }
   debug("Connected");
+  digitalWrite(STATUS_LED, LOW);
   
   strlcpy(config.access_point_prefix, custom_access_point_prefix.getValue(), sizeof(config.access_point_prefix));
   strlcpy(config.access_point_password, custom_access_point_password.getValue(), sizeof(config.access_point_password));

@@ -1,13 +1,13 @@
 {
-  "wifi_ssid": "",
-  "wifi_password": "",
+  "wifi_ssid": "CatinghamPalace",
+  "wifi_password": "clorur0sodico",
   "access_point_prefix": "",
-  "access_point_password": "",
-  "mqtt_server": "",
+  "access_point_password": "magill4gorill4",
+  "mqtt_server": "10.30.75.80",
   "mqtt_port": "",
-  "mqtt_username": "",
-  "mqtt_password": "",
-  "mqtt_topic": "",
-  "ota_password": "",
+  "mqtt_username": "iot",
+  "mqtt_password": "bellasto",
+  "mqtt_topic": "catingham_palace/green_room/air_quality_meter",
+  "ota_password": "bellasto",
   "ota_port": ""
 }
