@@ -6,7 +6,7 @@ Detects **air particulate matter** (PM - pm1, pm2.5, pm10) concentrations with a
 
 An alternative firmware for _ESP8266 devices_ like the [NodeMCU](https://github.com/nodemcu/nodemcu-firmware) board written for [**Arduino**](https://www.arduino.cc/) on [**PlatformIO**](https://platformio.org/)
 
-[![License](https://img.shields.io/github/license/rpanfili/airQualityMeter.svg)](https://github.com/rpanfili/airQualityMeter/blob/development/LICENSE.txt)
+[![License](https://img.shields.io/github/license/rpanfili/airQualityMeter.svg)](https://github.com/rpanfili/airQualityMeter/blob/development/LICENSE.txt) [![Build Status](https://travis-ci.com/rpanfili/airQualityMeter.svg?branch=master)](https://travis-ci.org/rpanfili/home-assistant)
 
 ### Disclaimer
 
