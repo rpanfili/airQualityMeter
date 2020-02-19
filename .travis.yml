@@ -1,0 +1,36 @@
+dist: bionic
+
+language: python
+python:
+  - "3.8"
+
+sudo: false
+cache:
+  pip: true
+  directories:
+  - "~/.platformio"
+
+install:
+  - pip install -U https://github.com/platformio/platformio-core/archive/develop.zip
+  - platformio update
+
+script:
+  - platformio run
+
+before_deploy:
+  - export RELEASE_NAME=$(echo $TRAVIS_TAG | sed -e 's/\(.*\)-/\u\1 v/')
+  - export RELEASE_DESCRIPTION=$(echo $TRAVIS_TAG | sed -e 's/\(.*\)-\(.*\)$/Version \u\2/')
+    
+deploy:
+  provider: releases
+  api_key: $GITHUB_OAUTH_TOKEN
+  file: 
+    - .pio/build/nodemcuv2/firmware.elf
+    - .pio/build/nodemcuv2/firmware.bin
+  skip_cleanup: true
+  overwrite: true
+  draft: true
+  name: "${RELEASE_NAME:-${TRAVIS_TAG:-${TRAVIS_COMMIT:0:7}}}"
+  body: "${RELEASE_DESCRIPTION:-No description}"
+  on: 
+    tags: true
