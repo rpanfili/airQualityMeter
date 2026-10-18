@@ -8,6 +8,11 @@
 #include <ArduinoOTA.h>
 #include <SoftwareSerial.h>
 #include <ArduinoJson.h>
+#include <memory>
+
+#include "config_utils.h"
+#include "homeassistant_discovery.h"
+#include "pms7003_frame.h"
 
 /*
  * Modify this file to preload default configuration!
@@ -19,24 +24,22 @@ struct configStruct
   char wifi_ssid[32] = "";
   char wifi_password[64] = "";
   char access_point_prefix[25] = "AQM-";
-  char access_point_password[64] = "stop_air_pollution";
+  char access_point_password[64] = "";
   char mqtt_server[40] = "";
   char mqtt_port[6] = "1883";
   char mqtt_username[32] = "";
   char mqtt_password[64] = "";
   char mqtt_topic[200] = "air_quality_meter/status";
-  char ota_password[64] = "ota_password";
+  char ota_password[64] = "";
   char ota_port[6] = "8266";
 };
 
 configStruct config;
 
-#define DEBUG True
-
 // Uncomment/comment to turn on/off debug output messages.
-#define DEBUG_NOTICE
+// #define DEBUG_NOTICE
 // Uncomment/comment to turn on/off error output messages.
-#define DEBUG_ERROR
+// #define DEBUG_ERROR
 
 // Set where debug messages will be printed.
 #define DEBUG_PRINTER Serial
@@ -100,28 +103,15 @@ PubSubClient mqtt_client(esp_client);
 
 // semaphore to save config file
 bool proceed_and_save_configuration = false;
+unsigned long last_mqtt_attempt = 0;
 
 #define SENSORNAME "air_quality_meter"
+#define FIRMWARE_VERSION "2.0.0"
 
 #define HTTP_PORT 80
 ESP8266WebServer server(HTTP_PORT);
 
-#define PMS5003ST_SIZE 40
-#define PMS5003ST_SIG1 0X42
-#define PMS5003ST_SIG2 0X4d
-
-struct pms5003STdata
-{
-  uint16_t pm10_standard, pm25_standard, pm100_standard;
-  uint16_t pm10_env, pm25_env, pm100_env;
-  uint16_t particles_03um, particles_05um, particles_10um, particles_25um, particles_50um, particles_100um;
-  uint16_t hcho, temperature, humidity;
-  uint16_t reserved;
-  uint16_t unused;
-  uint16_t checksum;
-};
-
-struct pms5003STdata pms_data;
+pms7003data pms_data;
 
 void debug(String str)
 {
@@ -129,6 +119,18 @@ void debug(String str)
   uint32_t now = millis();
   Serial.printf("%07u.%03u: %s\n", now / 1000, now % 1000, str.c_str());
 #endif // DEBUG
+}
+
+bool copy_config_value(JsonObject &json, const char *key, char *target, size_t target_size)
+{
+  const char *value = json.get<const char *>(key);
+  if (value == nullptr || value[0] == '\0')
+  {
+    return false;
+  }
+
+  strlcpy(target, value, target_size);
+  return true;
 }
 
 /**
@@ -147,7 +149,7 @@ void unlock_save_config()
 void load_config()
 {
 
-  Serial.println("mounting FS..");
+  debug("mounting FS..");
   if (SPIFFS.begin())
   {
     debug("filesystem mounted");
@@ -165,17 +167,30 @@ void load_config()
          * allocate a buffer to store data inside the file
          */
         size_t size = configFile.size();
-        std::unique_ptr<char[]> buffer(new char[size]);
-        configFile.readBytes(buffer.get(), size);
+        if (size == 0 || size > 2048)
+        {
+          debug("config file has an invalid size");
+          configFile.close();
+          return;
+        }
+
+        std::unique_ptr<char[]> buffer(new char[size + 1]);
+        size_t bytes_read = configFile.readBytes(buffer.get(), size);
+        buffer[bytes_read] = '\0';
+        configFile.close();
+        if (bytes_read != size)
+        {
+          debug("unable to read config file");
+          return;
+        }
+
         DynamicJsonBuffer json_buffer;
         JsonObject &json = json_buffer.parseObject(buffer.get());
         if (json.success())
         {
           debug("json loaded");
-          json.printTo(Serial);
-
-          strlcpy(config.wifi_ssid, json.get<const char *>("wifi_ssid"), sizeof(config.wifi_ssid));
-          strlcpy(config.wifi_password, json.get<const char *>("wifi_password"), sizeof(config.wifi_password));
+          copy_config_value(json, "wifi_ssid", config.wifi_ssid, sizeof(config.wifi_ssid));
+          copy_config_value(json, "wifi_password", config.wifi_password, sizeof(config.wifi_password));
           if ((config.wifi_ssid[0] != '\0'))
           {
             WiFi.mode(WIFI_STA);
@@ -186,42 +201,15 @@ void load_config()
            * Safely-load configuration values from config.json (manages also 
            * undefined keys)
            */
-          if (json.get<const char *>("access_point_prefix")[0] != '\0')
-          {
-            strlcpy(config.access_point_prefix, json["access_point_prefix"], sizeof(config.access_point_prefix));
-          }
-          if (json.get<const char *>("access_point_password")[0] != '\0')
-          {
-            strlcpy(config.access_point_password, json["access_point_password"], sizeof(config.access_point_password));
-          }
-          if (json.get<const char *>("mqtt_server")[0] != '\0')
-          {
-            strlcpy(config.mqtt_server, json["mqtt_server"], sizeof(config.mqtt_server));
-          }
-          if (json.get<const char *>("mqtt_port")[0] != '\0')
-          {
-            strlcpy(config.mqtt_port, json["mqtt_port"], sizeof(config.mqtt_port));
-          }
-          if (json.get<const char *>("mqtt_username")[0] != '\0')
-          {
-            strlcpy(config.mqtt_username, json["mqtt_username"], sizeof(config.mqtt_username));
-          }
-          if (json.get<const char *>("mqtt_password")[0] != '\0')
-          {
-            strlcpy(config.mqtt_password, json["mqtt_password"], sizeof(config.mqtt_password));
-          }
-          if (json.get<const char *>("mqtt_topic")[0] != '\0')
-          {
-            strlcpy(config.mqtt_topic, json["mqtt_topic"], sizeof(config.mqtt_topic));
-          }
-          if (json.get<const char *>("ota_password")[0] != '\0')
-          {
-            strlcpy(config.ota_password, json["ota_password"], sizeof(config.ota_password));
-          }
-          if (json.get<const char *>("ota_port")[0] != '\0')
-          {
-            strlcpy(config.ota_port, json["ota_port"], sizeof(config.ota_port));
-          }
+          copy_config_value(json, "access_point_prefix", config.access_point_prefix, sizeof(config.access_point_prefix));
+          copy_config_value(json, "access_point_password", config.access_point_password, sizeof(config.access_point_password));
+          copy_config_value(json, "mqtt_server", config.mqtt_server, sizeof(config.mqtt_server));
+          copy_config_value(json, "mqtt_port", config.mqtt_port, sizeof(config.mqtt_port));
+          copy_config_value(json, "mqtt_username", config.mqtt_username, sizeof(config.mqtt_username));
+          copy_config_value(json, "mqtt_password", config.mqtt_password, sizeof(config.mqtt_password));
+          copy_config_value(json, "mqtt_topic", config.mqtt_topic, sizeof(config.mqtt_topic));
+          copy_config_value(json, "ota_password", config.ota_password, sizeof(config.ota_password));
+          copy_config_value(json, "ota_port", config.ota_port, sizeof(config.ota_port));
         }
         else
         {
@@ -241,18 +229,26 @@ void setup_wifi()
 {
   debug("Trying to connect to WiFi network");
   delay(200);
+
+  if (strlen(config.access_point_password) < 8)
+  {
+    randomSeed(ESP.getCycleCount() ^ ESP.getChipId() ^ micros());
+    snprintf(config.access_point_password, sizeof(config.access_point_password), "aqm-%08lx", static_cast<unsigned long>(random(0x7fffffff)));
+    Serial.printf("Configuration portal password: %s\n", config.access_point_password);
+  }
+
   wifi_manager.setSaveConfigCallback(unlock_save_config);
   wifi_manager.setAPCallback(config_mode_callback);
 
-  WiFiManagerParameter custom_access_point_prefix("access_point_prefix", "AP mode - SSID prefix", config.access_point_prefix, 25);
-  WiFiManagerParameter custom_access_point_password("access_point_password", "AP mode - password", config.access_point_password, 64);
-  WiFiManagerParameter custom_mqtt_server("mqtt_server", "MQTT server address", config.mqtt_server, 40);
-  WiFiManagerParameter custom_mqtt_port("mqtt_port", "MQTT server port", config.mqtt_port, 6);
-  WiFiManagerParameter custom_mqtt_username("mqtt_username", "MQTT username", config.mqtt_username, 6);
-  WiFiManagerParameter custom_mqtt_password("mqtt_password", "MQTT password", config.mqtt_password, 200);
-  WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT topic", config.mqtt_topic, 200);
-  WiFiManagerParameter custom_ota_password("ota_password", "OTA password", config.ota_password, 200);
-  WiFiManagerParameter custom_ota_port("ota_port", "OTA port", config.ota_port, 200);
+  WiFiManagerParameter custom_access_point_prefix("access_point_prefix", "AP mode - SSID prefix", config.access_point_prefix, sizeof(config.access_point_prefix) - 1);
+  WiFiManagerParameter custom_access_point_password("access_point_password", "AP mode - password", config.access_point_password, sizeof(config.access_point_password) - 1);
+  WiFiManagerParameter custom_mqtt_server("mqtt_server", "MQTT server address", config.mqtt_server, sizeof(config.mqtt_server) - 1);
+  WiFiManagerParameter custom_mqtt_port("mqtt_port", "MQTT server port", config.mqtt_port, sizeof(config.mqtt_port) - 1);
+  WiFiManagerParameter custom_mqtt_username("mqtt_username", "MQTT username", config.mqtt_username, sizeof(config.mqtt_username) - 1);
+  WiFiManagerParameter custom_mqtt_password("mqtt_password", "MQTT password", config.mqtt_password, sizeof(config.mqtt_password) - 1);
+  WiFiManagerParameter custom_mqtt_topic("mqtt_topic", "MQTT topic", config.mqtt_topic, sizeof(config.mqtt_topic) - 1);
+  WiFiManagerParameter custom_ota_password("ota_password", "OTA password", config.ota_password, sizeof(config.ota_password) - 1);
+  WiFiManagerParameter custom_ota_port("ota_port", "OTA port", config.ota_port, sizeof(config.ota_port) - 1);
 
   wifi_manager.addParameter(&custom_access_point_prefix);
   wifi_manager.addParameter(&custom_access_point_password);
@@ -330,38 +326,51 @@ void setup_wifi()
  */
 void setup_arduino_ota()
 {
-  uint16_t port;
-  sscanf(config.ota_port, "%d", &port);
+  if (strlen(config.ota_password) < 8)
+  {
+    debug("OTA disabled: configure a password of at least 8 characters");
+    return;
+  }
+
+  uint16_t port = parse_port(config.ota_port, 8266);
   ArduinoOTA.setPort(port);
-  ArduinoOTA.setHostname(SENSORNAME);
+  String hostname = String(SENSORNAME) + "-" + String(ESP.getChipId(), HEX);
+  ArduinoOTA.setHostname(hostname.c_str());
   ArduinoOTA.setPassword(config.ota_password);
 
   ArduinoOTA.onStart([]() {
-    Serial.println("Starting OTA");
+    debug("Starting OTA");
   });
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd OTA");
+    debug("OTA complete");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    if (total > 0)
+    {
+      DEBUG_PRINT("Progress: ");
+      DEBUG_PRINT((progress * 100) / total);
+      DEBUG_PRINTLN("%");
+    }
   });
   ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
+    DEBUG_PRINT("OTA Error[");
+    DEBUG_PRINT(error);
+    DEBUG_PRINT("]: ");
     if (error == OTA_AUTH_ERROR)
-      Serial.println("Auth Failed");
+      DEBUG_PRINTLN("Auth Failed");
     else if (error == OTA_BEGIN_ERROR)
-      Serial.println("Begin Failed");
+      DEBUG_PRINTLN("Begin Failed");
     else if (error == OTA_CONNECT_ERROR)
-      Serial.println("Connect Failed");
+      DEBUG_PRINTLN("Connect Failed");
     else if (error == OTA_RECEIVE_ERROR)
-      Serial.println("Receive Failed");
+      DEBUG_PRINTLN("Receive Failed");
     else if (error == OTA_END_ERROR)
-      Serial.println("End Failed");
+      DEBUG_PRINTLN("End Failed");
   });
   ArduinoOTA.begin();
 }
 
-JsonObject &to_json(pms5003STdata data)
+JsonObject &to_json(const pms7003data &data)
 {
   StaticJsonBuffer<1024> json_buffer;
   JsonObject &json_data = json_buffer.createObject();
@@ -381,13 +390,11 @@ JsonObject &to_json(pms5003STdata data)
   json_data["pt50"] = data.particles_50um;
   json_data["pt100"] = data.particles_100um;
 
-  json_data["hcho"] = float(data.hcho / 1000.0);
-  json_data["tem"] = float(data.temperature / 10.0);
-  json_data["hum"] = float(data.humidity / 10.0);
+  json_data["sensor_version"] = data.version;
   return json_data;
 }
 
-boolean publish_data(pms5003STdata &pms_data)
+boolean publish_data(const pms7003data &pms_data)
 {
   DEBUG_PRINTLN("Prepare json object");
   JsonObject &data = to_json(pms_data);
@@ -411,103 +418,66 @@ boolean has_pms_data(Stream *stream)
    * Fastly flush characters from Serial buffer while waiting for start message
    * delimiters
    */
-  if (bytes_to_read < PMS5003ST_SIZE)
+  if (bytes_to_read < PMS7003_FRAME_SIZE)
   {
     if (bytes_to_read)
     {
-      while (bytes_to_read-- && stream->peek() != PMS5003ST_SIG1)
+      while (bytes_to_read-- && stream->peek() != 0x42)
       {
         // flush invalid chars
         buffer_char = stream->read();
         DEBUG_PRINT("skip char 0x");
         DEBUG_PRINTLN(buffer_char, HEX);
       }
-      /*if(stream->peek() == PMS5003ST_SIG1){ 
-        DEBUG_PRINTLN("buffer ready!"); 
-      }
-      else { 
-        DEBUG_PRINTLN("buffer empty!"); 
-      }*/
     }
     delay(50);
     return false;
   }
 
-  buffer_char = stream->read();
-  //DEBUG_PRINT("0x"); DEBUG_PRINT(buffer_char, HEX); DEBUG_PRINTLN(); return false;
-
-  // Read a byte at a time until we get to the special '0x42' start-byte
-  //uint8_t buffer_char = stream->read();
-
-  if (buffer_char != PMS5003ST_SIG1)
+  uint8_t frame[PMS7003_FRAME_SIZE];
+  frame[0] = stream->read();
+  if (frame[0] != 0x42)
   {
     ERROR_PRINT("[1] skip char 0x");
-    ERROR_PRINTLN(buffer_char, HEX);
+    ERROR_PRINTLN(frame[0], HEX);
     return false;
   }
   DEBUG_PRINTLN("found start char");
 
-  buffer_char = stream->read();
-  if (buffer_char != PMS5003ST_SIG2)
+  frame[1] = stream->read();
+  if (frame[1] != 0x4D)
   {
     ERROR_PRINT("[2] next char is not SIG2, skip 0x");
-    ERROR_PRINTLN(buffer_char, HEX);
+    ERROR_PRINTLN(frame[1], HEX);
     return false;
   }
   DEBUG_PRINTLN("found second char");
 
-  uint8_t framelen_high = stream->read();
-  uint8_t framelen_low = stream->read();
-  uint16_t framelen = framelen_low | framelen_high << 8;
-
-  if (framelen != (PMS5003ST_SIZE - 4))
+  if (stream->readBytes(frame + 2, PMS7003_FRAME_SIZE - 2) != PMS7003_FRAME_SIZE - 2)
   {
-    ERROR_PRINT("PMS5003ST : invalid framelength - ");
-    ERROR_PRINTLN(framelen, DEC);
+    ERROR_PRINTLN("PMS7003 : incomplete frame");
     return false;
-  }
-  DEBUG_PRINTLN("Framelen OK"); //DEBUG_PRINTLN(framelen, DEC);
-
-  uint8_t buffer[framelen];
-  uint16_t sum = 0;
-  sum += (uint16_t)PMS5003ST_SIG1 + (uint16_t)PMS5003ST_SIG2;
-  sum += (uint16_t)framelen_low + (uint16_t)framelen_high;
-
-  stream->readBytes(buffer, framelen);
-  // get checksum ready (framelen - 16bit checksum)
-  for (uint8_t i = 0; i < (framelen - 2); i++)
-  {
-    sum += (uint16_t)buffer[i];
   }
 
   /* debugging */
   DEBUG_PRINT("FRAME: ");
-  for (uint8_t i = 0; i < framelen; i++)
+  for (uint8_t i = 0; i < PMS7003_FRAME_SIZE; i++)
   {
     DEBUG_PRINT("0x");
-    DEBUG_PRINT(buffer[i], HEX);
+    DEBUG_PRINT(frame[i], HEX);
     DEBUG_PRINT(", ");
   }
   DEBUG_PRINTLN();
 
-  // The data comes in big endians
-  int buffer_u16_length = framelen / 2;
-  uint16_t buffer_u16[buffer_u16_length];
-  for (uint8_t i = 0; i < buffer_u16_length; i++)
+  if (!parse_pms7003_frame(frame, sizeof(frame), pms_data))
   {
-    buffer_u16[i] = buffer[i * 2 + 1] | (buffer[i * 2] << 8);
+    ERROR_PRINTLN("PMS7003 : invalid frame");
+    return false;
   }
-  //DEBUG_PRINTLN("buffer16 OK");
-  //return false;
-
-  // put it into a nice struct :)
-  memcpy((void *)&pms_data, (void *)buffer_u16, sizeof(pms_data));
-  //DEBUG_PRINTLN("Struct OK");
-
-  if (sum != pms_data.checksum)
+  if (pms_data.error != 0)
   {
-    ERROR_PRINTLN("Checksum failure");
-    //DEBUG_PRINTLN("Sum: "+ String(sum) + " - check: "+ String(pms_data.checksum));
+    ERROR_PRINT("PMS7003 error code: ");
+    ERROR_PRINTLN(pms_data.error);
     return false;
   }
   DEBUG_PRINTLN("Checksum OK");
@@ -520,10 +490,80 @@ boolean has_pms_data(Stream *stream)
  */
 void setup_mqtt_client()
 {
-  uint16_t port;
-  sscanf(config.mqtt_port, "%d", &port);
+  uint16_t port = parse_port(config.mqtt_port, 1883);
   debug("mqtt server: " + String(config.mqtt_server) + " - port: " + String(port));
   mqtt_client.setServer(config.mqtt_server, port);
+}
+
+void availability_topic(char *topic, size_t topic_size)
+{
+  snprintf(topic, topic_size, "%s/availability", config.mqtt_topic);
+}
+
+bool publish_homeassistant_discovery_sensor(const char *device_id, const char *availability, const homeassistant_sensor &sensor)
+{
+  char discovery_topic[128];
+  snprintf(discovery_topic, sizeof(discovery_topic), "homeassistant/sensor/%s/%s/config", device_id, sensor.object_id);
+
+  char unique_id[80];
+  snprintf(unique_id, sizeof(unique_id), "%s_%s", device_id, sensor.object_id);
+
+  char value_template[64];
+  snprintf(value_template, sizeof(value_template), "{{ value_json.%s }}", sensor.json_key);
+
+  char device_name[80];
+  snprintf(device_name, sizeof(device_name), "Air Quality Meter %06X", ESP.getChipId());
+
+  StaticJsonBuffer<768> json_buffer;
+  JsonObject &payload = json_buffer.createObject();
+  payload["name"] = sensor.name;
+  payload["unique_id"] = unique_id;
+  payload["state_topic"] = config.mqtt_topic;
+  payload["value_template"] = value_template;
+  payload["unit_of_measurement"] = sensor.unit;
+  payload["state_class"] = "measurement";
+  payload["availability_topic"] = availability;
+  payload["payload_available"] = "online";
+  payload["payload_not_available"] = "offline";
+  if (sensor.device_class != nullptr)
+  {
+    payload["device_class"] = sensor.device_class;
+  }
+
+  JsonObject &device = payload.createNestedObject("device");
+  JsonArray &identifiers = device.createNestedArray("identifiers");
+  identifiers.add(device_id);
+  device["name"] = device_name;
+  device["manufacturer"] = "airQualityMeter";
+  device["model"] = "ESP8266 + PMS7003";
+  device["sw_version"] = FIRMWARE_VERSION;
+
+  size_t payload_size = payload.measureLength() + 1;
+  if (payload_size + strlen(discovery_topic) + 10 > MQTT_MAX_PACKET_SIZE)
+  {
+    debug("Home Assistant discovery message is too large");
+    return false;
+  }
+
+  char message[1024];
+  payload.printTo(message, sizeof(message));
+  return mqtt_client.publish(discovery_topic, message, true);
+}
+
+bool publish_homeassistant_discovery(const char *availability)
+{
+  char device_id[40];
+  snprintf(device_id, sizeof(device_id), "%s_%06X", SENSORNAME, ESP.getChipId());
+
+  bool published = true;
+  for (size_t index = 0; index < homeassistant_sensor_count; index++)
+  {
+    if (!publish_homeassistant_discovery_sensor(device_id, availability, homeassistant_sensors[index]))
+    {
+      published = false;
+    }
+  }
+  return published;
 }
 
 /**
@@ -531,33 +571,32 @@ void setup_mqtt_client()
  */
 void reconnect()
 {
-  // Loop until we're reconnected
-  while (!mqtt_client.connected())
+  const unsigned long retry_interval = 5000;
+  if (mqtt_client.connected() || millis() - last_mqtt_attempt < retry_interval)
   {
-    Serial.print("username : '");
-    Serial.print(config.mqtt_username);
-    Serial.print("' - pass: '");
-    Serial.print(config.mqtt_password);
-    Serial.println("'");
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    String sensorname = config.access_point_prefix + String(ESP.getChipId(), HEX);
-    if (mqtt_client.connect(sensorname.c_str(), config.mqtt_username, config.mqtt_password))
+    return;
+  }
+
+  last_mqtt_attempt = millis();
+  String sensorname = String(SENSORNAME) + "-" + String(ESP.getChipId(), HEX);
+  char availability[220];
+  availability_topic(availability, sizeof(availability));
+  if (mqtt_client.connect(sensorname.c_str(), config.mqtt_username, config.mqtt_password, availability, 0, true, "offline"))
+  {
+    debug("MQTT connected");
+    mqtt_client.publish(availability, "online", true);
+    if (!publish_homeassistant_discovery(availability))
     {
-      Serial.println("connected");
+      debug("Home Assistant discovery failed");
     }
-    else
-    {
-      Serial.print("failed, rc=");
-      Serial.print(mqtt_client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
+  }
+  else
+  {
+    debug("MQTT connection failed, rc=" + String(mqtt_client.state()));
   }
 }
 
-void print_pms_data(pms5003STdata data)
+void print_pms_data(const pms7003data &data)
 {
   DEBUG_PRINTLN("---------------------------------------");
   DEBUG_PRINTLN("Concentration Units (standard)");
@@ -589,12 +628,8 @@ void print_pms_data(pms5003STdata data)
   DEBUG_PRINT("Particles > 10.0 um / 0.1L air:");
   DEBUG_PRINTLN(data.particles_100um);
   DEBUG_PRINTLN("---------------------------------------");
-  DEBUG_PRINT("HCHO: ");
-  DEBUG_PRINTLN(float(data.hcho / 1000.0), 4);
-  DEBUG_PRINT("Temperature: ");
-  DEBUG_PRINTLN(float(data.temperature / 10.), 2);
-  DEBUG_PRINT("Humidity: ");
-  DEBUG_PRINTLN(float(data.humidity / 10.0), 2);
+  DEBUG_PRINT("Sensor version: ");
+  DEBUG_PRINTLN(data.version);
   DEBUG_PRINTLN("---------------------------------------");
 }
 
@@ -609,9 +644,7 @@ void publishDatas(JsonObject &datas)
 void setup()
 {
   pms_serial.begin(9600);
-#ifdef DEBUG
   Serial.begin(115200);
-#endif
   delay(1000);
 
   // uncomment to reset ESP8266
@@ -622,6 +655,7 @@ void setup()
   load_config();
   setup_wifi();
   setup_mqtt_client();
+  setup_arduino_ota();
 }
 
 void loop()

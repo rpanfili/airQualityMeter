@@ -2,11 +2,11 @@
 > "There's so much pollution in the air now that if it weren't for our lungs there'd be no place to put it all."
 > \- Robert Orben
  
-Detects **air particulate matter** (PM - pm1, pm2.5, pm10) concentrations with a **Plantower PMS5003ST** sensor and sends data to an **MQTT topic**. 
+Detects **air particulate matter** (PM - pm1, pm2.5, pm10) concentrations with a **Plantower PMS7003** sensor and sends data to an **MQTT topic**.
 
 An alternative firmware for _ESP8266 devices_ like the [NodeMCU](https://github.com/nodemcu/nodemcu-firmware) board written for [**Arduino**](https://www.arduino.cc/) on [**PlatformIO**](https://platformio.org/)
 
-[![License](https://img.shields.io/github/license/rpanfili/airQualityMeter.svg)](https://github.com/rpanfili/airQualityMeter/blob/development/LICENSE.txt) [![Build Status](https://travis-ci.com/rpanfili/airQualityMeter.svg?branch=master)](https://travis-ci.org/rpanfili/home-assistant)
+[![License](https://img.shields.io/github/license/xtianpaiva/airQualityMeter.svg)](LICENSE.txt) [![Build Status](https://travis-ci.com/xtianpaiva/airQualityMeter.svg?branch=master)](https://travis-ci.com/xtianpaiva/airQualityMeter)
 
 ### Disclaimer
 
@@ -21,13 +21,11 @@ It's very affordable (you can buy _them_ for a few bucks) and you can develop cu
 
 [NodeMCU on Wikipedia](https://en.wikipedia.org/wiki/NodeMCU)
 
-### Plantower PMS5003ST
+### Plantower PMS7003
 A **digital particle concentration sensor** that count the number of suspended particles in the air using a laser and the scattering principle and output them as digital data.
 It's not expensive and you can find it on almost every marketplace like AliExpress.
 
-The **ST version** that I used works differently from the **PMS5003** standard because has also a formaldehyde, temperature and humidity sensor so it needs to transfer more data.
-
-![plantower 5003ST](resources/pms5003st.png)
+The PMS7003 reports particle concentrations and particle counts. It does not measure formaldehyde, temperature or humidity.
 
 ## Installing / Getting started
 
@@ -38,7 +36,7 @@ running. Remember that you *can* do all the setup steps without the PMS sensor c
 If you are used to this kind of software you already know how easier is to manage project dependencies, custom build routine, etc but if you are not don't worry! It's really easy and this can be a good starting point to learn something new :) You only need to [install it](https://platformio.org/platformio-ide) for your favorite IDE between Atom and VSCode.
 
 #### [NOT REQUIRED] - Edit the configuration file
-If you would like it you can edit the `data/config.json` configuration file to **preload all parameters** and skip the access-point mode configuration step later.
+If you would like it you can copy `data/config.example.json` to `data/config.json` and edit it to **preload all parameters** and skip the access-point mode configuration step later. The local `config.json` file is ignored by Git so that Wi-Fi, MQTT and OTA passwords are not committed accidentally.
 If you want you can configure only some of the parameters. Remove the property or leave it empty to use default project values.
 Then you will need to upload this file into the SPI filesystem using the PlatformIO command:
 ```shell
@@ -55,13 +53,30 @@ After being flashed this application needs almost no configuration. Just to setu
 To do that power the device up using the module micro-usb port. It'll boot in Access-point mode and a new wifi ssid will be available:
 ```
 ssid: AQM-xxxxxx
-pass: stop_air_pollution
+pass: printed on the serial monitor at startup
 ```
-Connect to that and a configuration page it will be displayed to you. If it'll not happen just open the browser and go to [http://192.168.4.1](http://192.168.4.1)
+On the first boot, the firmware generates a unique access-point password and prints it at 115200 baud. Connect to the access point using that password; a configuration page will be displayed. If it does not open automatically, go to [http://192.168.4.1](http://192.168.4.1).
 
 Follow the instructions and you will configure the sensor "everyday" network!
 
-If you want you can skip this part using the `data/config.json` **configuration file**. If you are interested in it check [this paragraph about]([NOT REQUIRED] - Create configuration file)
+If you want you can skip this part using the `data/config.json` **configuration file**. See [Edit the configuration file](#not-required---edit-the-configuration-file).
+
+### Security notes
+
+- Set a unique OTA password of at least eight characters to enable OTA updates. OTA remains disabled until then.
+- MQTT credentials and measurements are sent without transport encryption. Use a trusted, isolated network until TLS support is configured for your broker.
+- The device stores its configuration in SPIFFS. Treat physical access to the device as access to its Wi-Fi, MQTT and OTA credentials.
+
+## Development
+
+Run the hardware-independent tests before building firmware:
+
+```shell
+pio test -e native
+pio run
+```
+
+The native tests cover port parsing, PMS7003 frame parsing and the Home Assistant discovery registry. The firmware build still requires a compatible ESP8266 toolchain; deploy it only after a successful build.
 
 ## Usage
 
@@ -83,6 +98,10 @@ This are the minimal wiring that this project needs:
 | 8 (NC)|  | <span style="color:red">red</span> |
 
 ## (extra) HomeAssistant
+
+The firmware uses MQTT discovery with the standard `homeassistant` discovery prefix. When it connects to the broker, Home Assistant automatically creates 12 entities for PM concentrations and particle counts, groups them under one device and tracks its MQTT availability. No YAML configuration is required.
+
+The configured `mqtt_topic` remains the state topic. The firmware publishes `online` and `offline` status to `<mqtt_topic>/availability`. Discovery configuration messages are retained, while measurement values are not retained.
 
 I personally collect all these data on my **HomeAssistant** instance. It's an opensource home automation software that runs perfectly on micropc like **RaspberryPI** or local servers (NAS, nuc, etc)
 
@@ -109,9 +128,7 @@ homeassistant:
         - pt25
         - pt50
         - pt100
-        - hcho
-        - tem
-        - hum
+        - sensor_version
 
     - platform: template
       sensors:
@@ -159,18 +176,6 @@ homeassistant:
           friendly_name: Particles > 10.0um / 0.1L air
           value_template: '{{ states.sensor.air_quality_meter.attributes.pt100 }}'        
 
-        air_quality_temperature:
-          friendly_name: Temperature
-          value_template: '{{ states.sensor.air_quality_meter.attributes.tem }}'
-          unit_of_measurement: '°C'  
-        air_quality_humidity:
-          friendly_name: Humidity
-          value_template: '{{ states.sensor.air_quality_meter.attributes.hum }}'
-          unit_of_measurement: '%'       
-        air_quality_formaldehyde:
-          friendly_name: Formaldehyde
-          value_template: '{{ states.sensor.air_quality_meter.attributes.hcho }}'
-          unit_of_measurement: 'mg/m3'
 ```
 
 and this is an example Lovelace UI view:
@@ -218,15 +223,6 @@ views:
         - name: "> 10.0μg"
           entity: sensor.air_quality_pt100           
         
-    - type: entities
-      title: Others
-      show_header_toggle: false
-      entities:
-        - sensor.air_quality_formaldehyde
-        - sensor.air_quality_temperature
-        - entity: sensor.air_quality_humidity
-          icon: mdi:water-percent
-     
     - type: history-graph
       title: 'Concentration Units (standard)'
       entities:

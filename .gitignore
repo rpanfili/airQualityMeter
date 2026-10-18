@@ -6,9 +6,7 @@
 
 .DS_Store
 
-# If you want to ignore changes to config.json use:
-# git update-index --assume-unchanged data/config.json
-
-# data/config.json
+# Local device credentials must never be committed.
+data/config.json
 
 *.exclude
